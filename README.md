@@ -274,7 +274,7 @@ cd rpi-mobilenet
 python smart_waste_segregation.py
 ```
 
-It counts down 5 seconds, captures at 2592x1944, classifies, and prints the class, confidence and inference time. Point it at the downloaded `waste_classifier.onnx` by editing `model_path`, and fix `class_names` to `['metal', 'plastic', 'glass', 'biodegradable']` before trusting the label it prints.
+It counts down 5 seconds, captures at 2592x1944 to `waste_image.jpg`, classifies, and prints the class, confidence and inference time. Point it at the downloaded `waste_classifier.onnx` by editing `model_path`, and fix `class_names` to `['metal', 'plastic', 'glass', 'biodegradable']` before trusting the label it prints.
 
 ### On a single image, off the Pi
 
@@ -323,6 +323,38 @@ This is the part worth reading.
 **There was no proper held-out test set.** The only evaluation attempt is `test.ipynb`, and as described above it mapped labels from a six-class set onto a four-class model and silently dropped 860 of 1042 images. Its 2.75% accuracy number is meaningless in both directions. Without a clean test set there was no way to measure whether any change helped, so the model was tuned against validation accuracy on the same biased distribution it was trained on.
 
 **Hardware ate the schedule.** A large share of the project time went to hardware troubleshooting rather than to the model or the data. The PiCamera was the worst of it, between driver and stack changes and getting a reliable capture out of `libcamera-still`. Time spent there is time not spent collecting a real dataset, which is most of why the first failure above never got fixed.
+
+## Changes since the original
+
+The code here is the 2024 project. Two later passes touched it, and this section
+records exactly what they changed so the repository is still usable as a record.
+
+Added, from backup folders that were never part of the original working directory:
+
+- `rpi-mobilenet/camera-test.py`, the failed OpenCV capture attempt of 11 October 2024.
+- `rpi-mobilenet/exporter-v2-early.py`, the earliest surviving code, a two-class
+  MobileNetV2 ONNX export from the same day. Its checkpoint,
+  `garbage_classifier_MN95.pth`, did not survive, so the script will not run. It is
+  here for the date and for the two-class starting point, nothing more.
+- `rpi-mobilenet/rescore_test.py`, written in 2026, which is analysis of the old
+  artifacts rather than project code.
+
+Fixed in `smart_waste_segregation.py`, because they were defects rather than history:
+
+- The capture target was `metal_test.jpg`, a committed test image, so every run
+  overwrote it. It now captures to `waste_image.jpg`, which was already the capture
+  function's own default.
+- "Classify another object" called `main()` recursively, growing the stack on every
+  item. It is a loop now.
+- The onnxruntime session was rebuilt on every classification. It is constructed once,
+  before the loop.
+
+Deliberately not fixed:
+
+- `class_names` in `smart_waste_segregation.py` is still `['plastic', 'paper',
+  'metal', 'glass']`, which is wrong for the weights it loads. The mislabelled output
+  is part of what went wrong and the file now carries a comment saying so. Use
+  `inference.py`, which has the correct ordering, if you want a right answer.
 
 ## Model weights and licences
 
