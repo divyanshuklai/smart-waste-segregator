@@ -11,6 +11,27 @@ This repo holds two generations of the work:
 
 The honest results are in [Limitations](#limitations--what-went-wrong). The bin worked. The model did not work well on real trash.
 
+## Timeline
+
+The project predates the author using git, so there is no commit history from the time.
+What follows is reconstructed from filesystem modification times on the surviving
+backup folders. Treat it as evidence rather than proof: mtimes survive a copy but can
+be rewritten by one, and the folders were moved more than once before landing here.
+
+| Date | What happened |
+|---|---|
+| 2024-10-11 | First code: `camera-test.py` (OpenCV capture attempt) and `exporter-v2-early.py` (a two-class MobileNetV2 export). Both are dead ends, both are kept below. |
+| 2024-11-06 | Training day. `sws.ipynb` 16:23, `waste_seg.ipynb` 17:44, then `best_model.pth` 18:41, `export.py` 18:43 and `waste_classifier.onnx` 18:44 within three minutes of each other. |
+| 2024-11-07 | Pi integration, 02:33 to 10:21. `pir_test.py`, the three test JPEGs, then `smart_waste_segregation.py` at 10:17 and `inference.py` at 10:21. This is the night the `libcamera-still` capture path was written. |
+| 2024-11-13 | The evaluation attempt: `confusion_matrix.png`, `error_log.txt` and `prediction_results.csv`, all written at 17:05. |
+| 2024-11-23 | Final notebook edits to `sws.ipynb`, `test.ipynb` and `waste_seg.ipynb`. |
+| 2025-03-02/03 | Generation 2, a year later: the YOLO11 TorchScript and NCNN exports in `yolo11-exports/`. |
+
+The four weeks between the first camera attempt on 11 October and the working capture
+path on 7 November are the hardware troubleshooting described under
+[Limitations](#limitations--what-went-wrong). That gap is the honest shape of the
+project: most of the calendar went to getting hardware to cooperate, not to the model.
+
 ## Hardware
 
 - Raspberry Pi as the only compute. No accelerator, no offboard inference.
@@ -20,6 +41,51 @@ The honest results are in [Limitations](#limitations--what-went-wrong). The bin 
 - Two MG995 metal-gear servos driving a dual-flap mechanism. The dual-flap design was compact and the metal-gear servos held up to repeated actuation.
 
 The LIDAR trigger is the design decision that mattered most. The first plan was to process a continuous video stream and detect the object in frame. On a Pi that pins the CPU and the board overheats. A LIDAR trip that fires a single capture removed the idle load completely, and the thermal problem went away with it.
+
+### Getting a picture out of the camera
+
+The Python camera libraries could not see the camera. The operating system could:
+the device enumerated, and `libcamera-still` on the command line produced a JPEG
+every time. Only the bindings were blind.
+
+`camera-test.py` is the first attempt, dated 11 October 2024. It is four lines of
+OpenCV and it fails at the second one:
+
+```python
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("Error: Camera not accessible")
+    exit()
+```
+
+The fix, in `smart_waste_segregation.py` four weeks later, is to stop fighting the
+bindings and drive the vendor's own tool instead, writing to a file and reading it
+back with OpenCV:
+
+```python
+command = [
+    'libcamera-still',
+    '-o', image_path,
+    '--nopreview',
+    '--width', '2592',
+    '--height', '1944',
+    '-t', '1000'
+]
+subprocess.run(command, check=True)
+```
+
+This is worth stating plainly because it looks like a workaround and is not one.
+`libcamera-still` is the supported Raspberry Pi capture tool; the `libcamera` stack had
+replaced the legacy camera interface, and the Python bindings on the OS image of the
+day did not reliably reach it. Shelling out to the vendor CLI and reading the file back
+is the intended path when the bindings are the broken layer, and it costs one process
+spawn per capture on a pipeline that already budgets three seconds end to end.
+
+The capture is invoked with an argument list rather than a shell string, so filenames
+carrying spaces or shell metacharacters cannot break it, and `check=True` turns a
+failed capture into a `CalledProcessError` that the caller handles rather than a
+silently missing file that surfaces later as a confusing OpenCV `None`.
+
 
 ## Pipeline (generation 1)
 
@@ -142,6 +208,8 @@ rpi-mobilenet/                    generation 1, the version that ran on the bin
   confusion_matrix.png            evaluation output, see the caveat above
   prediction_results.csv          per-image predictions, 182 rows
   error_log.txt                   860 skipped images from the broken label mapping
+  camera-test.py                  first camera attempt, OpenCV, did not work
+  exporter-v2-early.py            earliest surviving code, two-class MobileNetV2
   metal_test.jpg                  test images used during bring-up
   pet_test.jpg
   plastic_test.jpg
