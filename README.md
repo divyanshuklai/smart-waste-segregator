@@ -158,6 +158,45 @@ The numbers it printed are 2.75% accuracy over 182 images, with 860 of 1042 imag
 
 So the 150 biodegradable-predicted-metal cell in the confusion matrix is mostly a label mapping bug, not a model failure. The real conclusion is weaker and worse: there was never a valid held-out test set for this model.
 
+#### Re-scoring it
+
+The source images are named after their class, so the filename prefix recovers the
+label the harness threw away. `rescore_test.py` re-scores `prediction_results.csv`
+against it:
+
+```bash
+cd rpi-mobilenet
+python rescore_test.py
+```
+
+| | |
+|---|---|
+| As scored by `test.ipynb` | **2.75%** (5 of 182) |
+| Re-scored against filename labels | **88.9%** (152 of 171) |
+| Validation accuracy during training | 91.63% |
+
+The re-scored figure is consistent with validation, which is the point: the weights
+were fine and the evaluation was broken.
+
+It is a sanity check and not a test accuracy, for four reasons, and the script prints
+all four rather than just the number:
+
+1. The surviving sample is 169 metal images and 2 plastic. The headline figure is
+   essentially metal recall (150 of 169), not four-class accuracy.
+2. Eleven `paper` files cannot be scored at all. `paper` and `cardboard` were folded
+   into `biodegradable` at training time, so there is no unambiguous ground truth for
+   them against the four-class head.
+3. These 182 rows are what survived a harness that dropped 860 of 1042 images. They
+   are leftovers, not a split.
+4. Validation itself was measured on the same biased distribution the model trained
+   on, so agreeing with it is weak evidence.
+
+None of this rescues the project's actual conclusion. There was still never a valid
+held-out test set, and the model still did not work on real trash. What the re-score
+establishes is narrower: the catastrophic number was measuring the harness, not the
+model.
+
+
 ## Generation 2: YOLO11 exports
 
 `yolo11-exports/model.ipynb` is exploratory. It takes the stock Ultralytics `yolo11n` detection and `yolo11n-cls` classification checkpoints and exports each to TorchScript and to NCNN, which is the format worth using on a Pi-class CPU.
@@ -205,6 +244,7 @@ rpi-mobilenet/                    generation 1, the version that ran on the bin
   waste_seg.ipynb                 MobileNetV3-Small training, produced the shipped weights
   sws.ipynb                       separate MobileNetV2 run on a larger merged dataset
   test.ipynb                      ONNX evaluation, wrote the artifacts below
+  rescore_test.py                 re-scores that evaluation against filename labels
   confusion_matrix.png            evaluation output, see the caveat above
   prediction_results.csv          per-image predictions, 182 rows
   error_log.txt                   860 skipped images from the broken label mapping
