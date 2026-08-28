@@ -50,11 +50,26 @@ the data, and that's the root of most of what follows.
 - Two MG995 metal-gear servos on a dual-flap mechanism. I went with dual flaps because
   it was compact, and metal gears because plastic ones strip.
 
+![The bin as built, with the wiring left on the outside face](docs/bin.jpg)
+
 The LIDAR trigger is the decision I'd point to first. My original plan was to run a
 continuous video stream and detect the object in frame. That pins the Pi's CPU and the
 board overheats, and I spent a while chasing thermal throttling before realising I
 didn't need continuous anything. One capture per LIDAR trip means the CPU is idle
 between events, and the thermal problem disappeared.
+
+### How the flaps map to classes
+
+Two flaps in series give four outlets from two binary decisions. Servo 1 throws its
+flap one way or the other, servo 2 does the same on the flap below it, so a class is
+just a pair of servo positions: plastic is right then left, glass left then left,
+metal right then right, organic left then right.
+
+![Camera, LIDAR and flap layout, with the servo positions for each compartment](docs/mechanism.png)
+
+The wiring: two servos on PWM pins, the VL53L0X on I2C, and a button and an LED.
+
+![Wiring: Pi 4, two servos, a VL53L0X GY530 LIDAR module, a button and an LED](docs/circuit.png)
 
 ### Getting a picture out of the camera
 
@@ -324,6 +339,11 @@ yolo11-exports/                   generation 2, YOLO11 edge export experiments
   pyproject.toml                  uv project, Python 3.13
   uv.lock
   main.py                         stub
+
+docs/                             photos and diagrams of the built bin
+  bin.jpg                         the assembled bin
+  mechanism.png                   camera, LIDAR and flap layout, class to servo map
+  circuit.png                     wiring diagram
 ```
 
 ## Running it
