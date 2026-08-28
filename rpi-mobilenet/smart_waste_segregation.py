@@ -40,20 +40,21 @@ def capture_image(image_path: str = 'waste_image.jpg') -> bool:
         print(f"Unexpected error during capture: {e}")
         return False
 
-def process_image(image_path: str, model_path: str, class_names: list):
+def load_session(model_path: str):
+    """Build the onnxruntime session once, ahead of the capture loop"""
+    session_options = onnxruntime.SessionOptions()
+    session_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session_options.intra_op_num_threads = 4
+
+    return onnxruntime.InferenceSession(
+        model_path,
+        providers=['CPUExecutionProvider'],
+        sess_options=session_options
+    )
+
+def process_image(session, image_path: str, class_names: list):
     """Process the captured image with the ONNX model"""
     try:
-        # Load and configure model
-        session_options = onnxruntime.SessionOptions()
-        session_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-        session_options.intra_op_num_threads = 4
-        
-        session = onnxruntime.InferenceSession(
-            model_path,
-            providers=['CPUExecutionProvider'],
-            sess_options=session_options
-        )
-        
         # Load and preprocess image using OpenCV
         img = cv2.imread(image_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -106,37 +107,45 @@ def display_results(predicted_class: str, confidence: float, inference_time: flo
 
 def main():
     # Configuration
-    image_path = 'metal_test.jpg'
+    image_path = 'waste_image.jpg'
     model_path = 'waste_classifier.onnx'
+    # NOTE: this ordering is wrong for the shipped weights, which expect
+    # ['metal', 'plastic', 'glass', 'biodegradable']. It is left as it shipped
+    # because the mislabelled output is part of the record. See the README.
     class_names = ['plastic', 'paper', 'metal', 'glass']
     
     print("\nSmart Waste Segregation System")
     print("------------------------------")
     
-    # Capture image
-    if not capture_image(image_path):
-        print("Failed to capture image. Exiting.")
-        return
+    # Build the inference session once, outside the capture loop
+    session = load_session(model_path)
     
-    # Process image
-    print("\nProcessing image...")
-    predicted_class, confidence, inference_time = process_image(
-        image_path, model_path, class_names
-    )
-    
-    if predicted_class is not None:
-        display_results(predicted_class, confidence, inference_time)
-    else:
-        print("Failed to process image")
-    
-    # Ask if user wants to classify another object
     while True:
-        choice = input("\nWould you like to classify another object? (y/n): ").lower()
-        if choice in ['y', 'n']:
-            if choice == 'y':
-                main()
+        # Capture image
+        if not capture_image(image_path):
+            print("Failed to capture image. Exiting.")
+            return
+        
+        # Process image
+        print("\nProcessing image...")
+        predicted_class, confidence, inference_time = process_image(
+            session, image_path, class_names
+        )
+        
+        if predicted_class is not None:
+            display_results(predicted_class, confidence, inference_time)
+        else:
+            print("Failed to process image")
+        
+        # Ask if user wants to classify another object
+        while True:
+            choice = input("\nWould you like to classify another object? (y/n): ").lower()
+            if choice in ['y', 'n']:
+                break
+            print("Please enter 'y' or 'n'")
+        
+        if choice == 'n':
             break
-        print("Please enter 'y' or 'n'")
 
 if __name__ == "__main__":
     try:
