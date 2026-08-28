@@ -9,7 +9,7 @@ This repo holds two generations of the work:
 - `rpi-mobilenet/` is the version that ran on the bin (November 2024). PyTorch training, ONNX export, onnxruntime on the Pi.
 - `yolo11-exports/` is a later look at YOLO11 for edge deployment (March 2025). TorchScript and NCNN exports, no waste-specific training.
 
-The honest results are in [Limitations](#limitations--what-went-wrong). The bin worked. The model did not work well on real trash.
+The two subsystems performed differently and are reported separately in [Results](#results). The hardware met its targets. The classifier did not generalise: distribution shift between the training images and the bin camera, plus heavy class skew in the training data, put on-device classification well below the 91.63% validation figure.
 
 ## Timeline
 
@@ -28,9 +28,8 @@ be rewritten by one, and the folders were moved more than once before landing he
 | 2025-03-02/03 | Generation 2, a year later: the YOLO11 TorchScript and NCNN exports in `yolo11-exports/`. |
 
 The four weeks between the first camera attempt on 11 October and the working capture
-path on 7 November are the hardware troubleshooting described under
-[Limitations](#limitations--what-went-wrong). That gap is the honest shape of the
-project: most of the calendar went to getting hardware to cooperate, not to the model.
+path on 7 November were spent on camera bring-up. Most of the project calendar went to
+hardware rather than to the model or the data.
 
 ## Hardware
 
@@ -44,12 +43,12 @@ The LIDAR trigger is the design decision that mattered most. The first plan was 
 
 ### Getting a picture out of the camera
 
-The Python camera libraries could not see the camera. The operating system could:
-the device enumerated, and `libcamera-still` on the command line produced a JPEG
-every time. Only the bindings were blind.
+The Python camera bindings could not open the camera. The OS could: the device
+enumerated and `libcamera-still` produced a JPEG from the command line every time.
+The failure was in the bindings, not the driver or the hardware.
 
-`camera-test.py` is the first attempt, dated 11 October 2024. It is four lines of
-OpenCV and it fails at the second one:
+`camera-test.py` is the first attempt, dated 11 October 2024. It fails at the second
+line:
 
 ```python
 cap = cv2.VideoCapture(0)
@@ -58,9 +57,8 @@ if not cap.isOpened():
     exit()
 ```
 
-The fix, in `smart_waste_segregation.py` four weeks later, is to stop fighting the
-bindings and drive the vendor's own tool instead, writing to a file and reading it
-back with OpenCV:
+The fix, in `smart_waste_segregation.py` four weeks later, invokes the vendor tool
+directly, writes to a file, and reads it back with OpenCV:
 
 ```python
 command = [
@@ -74,17 +72,15 @@ command = [
 subprocess.run(command, check=True)
 ```
 
-This is worth stating plainly because it looks like a workaround and is not one.
-`libcamera-still` is the supported Raspberry Pi capture tool; the `libcamera` stack had
-replaced the legacy camera interface, and the Python bindings on the OS image of the
-day did not reliably reach it. Shelling out to the vendor CLI and reading the file back
-is the intended path when the bindings are the broken layer, and it costs one process
-spawn per capture on a pipeline that already budgets three seconds end to end.
+`libcamera-still` is the supported Raspberry Pi capture tool. The `libcamera` stack
+had replaced the legacy camera interface, and the Python bindings on the OS image of
+the day did not reliably reach it. Calling the CLI and reading the file back costs one
+process spawn per capture, against a pipeline budget of three seconds.
 
-The capture is invoked with an argument list rather than a shell string, so filenames
-carrying spaces or shell metacharacters cannot break it, and `check=True` turns a
-failed capture into a `CalledProcessError` that the caller handles rather than a
-silently missing file that surfaces later as a confusing OpenCV `None`.
+Two details in the call matter. The command is passed as an argument list rather than a
+shell string, so no quoting or metacharacter handling is involved. `check=True` raises
+`CalledProcessError` on a failed capture, so the caller handles it there instead of
+`cv2.imread` returning `None` further down.
 
 
 ## Pipeline (generation 1)
@@ -130,7 +126,14 @@ Two training notebooks are here, and they are not the same experiment.
 | 2 | glass | `brown-glass`, `green-glass`, `white-glass` |
 | 3 | biodegradable | `biological`, `paper`, `cardboard` |
 
-6571 images total, split 5256 train and 1315 validation. Ten epochs, best validation accuracy 91.63% at epoch 9. A second, longer run in the same notebook adds heavier augmentation (random resized crop, flips, colour jitter, Gaussian blur, rotation) with `OneCycleLR`, early stopping patience 5, 20 epochs over 165 batches. Its per-epoch numbers were not kept in the notebook output.
+6571 images total, split 5256 train and 1315 validation. Ten epochs, best validation accuracy 91.63% at epoch 9. Per epoch:
+
+| Epoch | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| Train acc | 84.59 | 91.67 | 94.86 | 96.50 | 96.29 | 97.13 | 97.55 | 97.49 | - |
+| Val acc | 87.83 | 90.95 | 91.56 | 89.35 | 83.27 | 91.03 | 85.93 | 89.43 | 91.63 |
+
+Training accuracy rises steadily to 97.5% while validation oscillates between 83.3% and 91.6% and does not improve after epoch 3. The gap and the variance are both large for a 4-class problem, which is what fitting a narrow distribution looks like. A second, longer run in the same notebook adds heavier augmentation (random resized crop, flips, colour jitter, Gaussian blur, rotation) with `OneCycleLR`, early stopping patience 5, 20 epochs over 165 batches. Its per-epoch numbers were not kept in the notebook output.
 
 `sws.ipynb` is a separate MobileNetV2 experiment on a larger merged dataset: 7324 images from a YOLO-format waste set plus 15515 from a folder-per-class set, mapped down to `['organic', 'plastic', 'metal', 'glass']` and split 18271 train / 4568 validation. A `WeightedRandomSampler` was used because the merged data is badly skewed:
 
@@ -156,12 +159,12 @@ The numbers it printed are 2.75% accuracy over 182 images, with 860 of 1042 imag
 - The label files come from a six-class YOLO set (`BIODEGRADABLE`, `CARDBOARD`, `GLASS`, `METAL`, `PAPER`, `PLASTIC`). `test.ipynb` reads the raw class index and rejects anything at or above 4, so every `PAPER` and `PLASTIC` image was dropped. That is the 860 failures in `error_log.txt`.
 - The four indices that survive are then read against a different four-class list, so a `METAL` image is scored as `biodegradable`. `prediction_results.csv` shows this directly: `metal1000_jpg....jpg` has `true_class` recorded as `biodegradable`.
 
-So the 150 biodegradable-predicted-metal cell in the confusion matrix is mostly a label mapping bug, not a model failure. The real conclusion is weaker and worse: there was never a valid held-out test set for this model.
+So the 150 biodegradable-predicted-metal cell in the confusion matrix is mostly a label mapping bug, not a model failure. The usable conclusion is narrower: this model never had a valid held-out test set.
 
 #### Re-scoring it
 
 The source images are named after their class, so the filename prefix recovers the
-label the harness threw away. `rescore_test.py` re-scores `prediction_results.csv`
+label the harness discarded. `rescore_test.py` re-scores `prediction_results.csv`
 against it:
 
 ```bash
@@ -175,11 +178,11 @@ python rescore_test.py
 | Re-scored against filename labels | **88.9%** (152 of 171) |
 | Validation accuracy during training | 91.63% |
 
-The re-scored figure is consistent with validation, which is the point: the weights
-were fine and the evaluation was broken.
+The re-scored figure is consistent with validation accuracy, which indicates the
+weights were intact and the evaluation harness was at fault.
 
-It is a sanity check and not a test accuracy, for four reasons, and the script prints
-all four rather than just the number:
+It is a sanity check, not a test accuracy. The script prints these four caveats with
+the number:
 
 1. The surviving sample is 169 metal images and 2 plastic. The headline figure is
    essentially metal recall (150 of 169), not four-class accuracy.
@@ -191,10 +194,10 @@ all four rather than just the number:
 4. Validation itself was measured on the same biased distribution the model trained
    on, so agreeing with it is weak evidence.
 
-None of this rescues the project's actual conclusion. There was still never a valid
-held-out test set, and the model still did not work on real trash. What the re-score
-establishes is narrower: the catastrophic number was measuring the harness, not the
-model.
+This does not change the project's conclusion. There was still no valid held-out test
+set, and on-device classification was still poor for the reasons in
+[Results](#results). The re-score establishes only that the 2.75% figure was measuring
+the harness rather than the model.
 
 
 ## Generation 2: YOLO11 exports
@@ -312,22 +315,93 @@ uv run python -c "from ultralytics import YOLO; YOLO('yolo11n-cls.pt').export(fo
 
 `ultralytics` is not in `pyproject.toml`, so add it first. The committed exports were produced with 8.3.82.
 
-## Limitations / what went wrong
+## Results
 
-This is the part worth reading.
+The bin has two subsystems and they performed differently. The hardware met its
+targets. The classifier did not generalise from the training images to the bin camera.
 
-**The dataset was biased and the model did not survive contact with real trash.** Training used public waste datasets. Those images are clean, centred, well lit, one object per frame. Real trash going into a bin is crumpled, dirty, partly occluded and photographed from above under whatever light the room has. Validation accuracy above 90% did not translate. Real-world performance was poor.
+### Hardware
 
-**Online waste datasets do not look like waste.** This is the same problem stated from the data side, and it is the root cause. Nobody collected images from the actual bin with the actual camera at the actual angle. A few hundred images photographed through the deployed PiCamera would have been worth more than the tens of thousands of scraped images that were used.
+Everything mechanical and electrical worked as designed, and none of it was the
+limiting factor.
 
-**There was no proper held-out test set.** The only evaluation attempt is `test.ipynb`, and as described above it mapped labels from a six-class set onto a four-class model and silently dropped 860 of 1042 images. Its 2.75% accuracy number is meaningless in both directions. Without a clean test set there was no way to measure whether any change helped, so the model was tuned against validation accuracy on the same biased distribution it was trained on.
+- **Latency.** Trigger to actuation stayed under 3 seconds. Most of that is the
+  capture: `libcamera-still` runs with `-t 1000`, a 1 second settle before the shutter,
+  plus process spawn and a 2592x1944 JPEG write. Inference on a 6.1 MB MobileNetV3-Small
+  under onnxruntime was not the bottleneck.
+- **Thermals.** The LIDAR trigger solved the overheating. Decoding a continuous video
+  stream held the Pi CPU at load and the board throttled. One capture per LIDAR trip
+  leaves the CPU idle between events.
+- **Actuation.** The MG995 metal-gear servos and the dual-flap mechanism handled
+  repeated actuation cycles without stalling or losing position.
+- **Capture.** Reliable at 2592x1944 once the Python bindings were bypassed. See
+  [Getting a picture out of the camera](#getting-a-picture-out-of-the-camera).
+- **Inference runtime.** onnxruntime on `CPUExecutionProvider` with
+  `ORT_ENABLE_ALL` and 4 intra-op threads ran within budget on Pi-class CPU.
 
-**Hardware ate the schedule.** A large share of the project time went to hardware troubleshooting rather than to the model or the data. The PiCamera was the worst of it, between driver and stack changes and getting a reliable capture out of `libcamera-still`. Time spent there is time not spent collecting a real dataset, which is most of why the first failure above never got fixed.
+### Classifier
+
+Validation accuracy was 91.63%. Classification on the bin was substantially worse.
+Two causes, both in the data rather than in the model, the export or the runtime.
+
+**Distribution shift between training and inference.** The training images are
+catalogue-style: one object, centred, uncluttered background, even lighting, shot at
+roughly eye level. The inference images come from a fixed camera mounted above the
+bin at close range, photographing whatever lands in it — crumpled, soiled, partially
+occluded, at arbitrary orientation, under room lighting that changes through the day.
+The model was fitted to the first distribution and deployed against the second.
+
+The last cell of `waste_seg.ipynb` shows this on three photographs taken by hand
+rather than drawn from the dataset:
+
+| Image | Predicted | Confidence | Correct |
+|---|---|---|---|
+| `pet_test.jpg` | plastic | 88.49% | yes |
+| `plastic_test.jpg` | metal | 79.02% | **no** |
+| `metal_test.jpg` | metal | 90.70% | yes |
+
+Three images is an illustration, not a measurement. What is informative is the shape
+of the error rather than the rate: the model is wrong at 79% confidence, with the
+correct class down at 12%. High-confidence errors on out-of-distribution inputs are
+the expected failure mode, since softmax confidence is not calibrated outside the
+training distribution. An underfitted model would spread probability mass instead of
+committing to the wrong class.
+
+**Class skew in the training data.** The four deployed classes are built by grouping
+source folders, and the grouping is uneven: `metal` and `plastic` come from one source
+folder each, while `glass` draws from three (`brown-glass`, `green-glass`,
+`white-glass`) and `biodegradable` from three (`biological`, `paper`, `cardboard`).
+Per-class counts were not printed in `waste_seg.ipynb`, so the exact ratio for the
+shipped run is not recorded, but the grouping puts roughly three times as much source
+material behind two classes as behind the other two. No class weighting or balanced
+sampling was used in that run.
+
+The sibling experiment in `sws.ipynb` is the one place the imbalance was actually
+counted: on its larger merged dataset the split ran 64.4% organic to 7.4% plastic,
+tabulated under [Training runs](#training-runs). That run used a
+`WeightedRandomSampler` to compensate. The run that shipped did not.
+
+**No held-out test set, so neither cause was measurable at the time.** The only
+evaluation attempt is `test.ipynb`, which mapped labels from a six-class set onto a
+four-class model and dropped 860 of 1042 images. Its 2.75% is an artifact of that
+mapping and carries no information about the model in either direction. Without a
+clean test set there was no way to measure whether a change helped, so the model was
+selected on validation accuracy computed on the same distribution it was trained on —
+which is exactly the distribution that does not match the bin.
+
+### What would have fixed it
+
+Collecting a few hundred images through the deployed PiCamera, at the mounted angle
+and under the actual lighting, then fine-tuning on them. That addresses the shift
+directly and gives a test set drawn from the deployment distribution, which also makes
+the skew measurable. It was not done: the four weeks of camera bring-up in the
+[Timeline](#timeline) consumed the schedule that would have gone to data collection.
 
 ## Changes since the original
 
-The code here is the 2024 project. Two later passes touched it, and this section
-records exactly what they changed so the repository is still usable as a record.
+The code here is the 2024 project. Later passes added the recovered files, the
+re-score and this documentation; the section records what they changed so the
+repository still reads as a record of the original work.
 
 Added, from backup folders that were never part of the original working directory:
 
