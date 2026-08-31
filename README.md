@@ -26,7 +26,7 @@ for the YOLO11 exports.
   catalogue photos and deployed on a fixed overhead camera looking at crumpled trash.
 - Lack of a proper test set hindered real-world performance evaluation.
 - Significant time was lost troubleshooting hardware issues (e.g. PiCamera).
-- The 2.75% in `test.ipynb` is a broken label mapping, not a result — six-class labels
+- The 2.75% in `test.ipynb` is a broken label mapping, not a result: six-class labels
   read against a four-class head, dropping 860 of 1042 images. `rescore_test.py` walks
   through it and re-scores the survivors off their filenames.
 
@@ -42,11 +42,11 @@ then right, organic left then right.
 
 ## Layout
 
-- `rpi-mobilenet/` — the version that ran on the bin. Training notebooks, ONNX export,
+- `rpi-mobilenet/` is the version that ran on the bin. Training notebooks, ONNX export,
   Pi runtime, and the evaluation I got wrong.
-- `yolo11-exports/` — TorchScript and NCNN exports of the stock Ultralytics YOLO11n.
+- `yolo11-exports/` holds TorchScript and NCNN exports of the stock Ultralytics YOLO11n.
   Export plumbing and one latency number; nothing here is trained on waste.
-- `docs/` — photos and diagrams of the built bin.
+- `docs/` holds photos and diagrams of the built bin.
 
 Weights are on Hugging Face, not in the repo:
 **https://huggingface.co/TheHelltaker/smart-waste-segregator**
